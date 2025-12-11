@@ -1,6 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 require("dotenv").config();
+
 const port = process.env.PORT || 4000;
 const app = express();
 
@@ -8,9 +9,9 @@ app.use(cors());
 app.use(express.json());
 
 const { MongoClient, ServerApiVersion } = require("mongodb");
-const uri = process.env.MONGO_DB_URI;
+const uri = process.env.MONGODB_URI;
 
-// Create a MongoClient with a MongoClientOptions object to set the Stable API version
+// Create a MongoClient
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
@@ -21,21 +22,47 @@ const client = new MongoClient(uri, {
 
 async function run() {
   try {
+    // Connect once
     await client.connect();
-    await client.db("admin").command({ ping: 1 });
-    console.log(
-      "Pinged your deployment. You successfully connected to MongoDB!"
-    );
-  } finally {
-    await client.close();
+
+    const InfraDB = client.db("infraDB");
+    const IssuesCollection = InfraDB.collection("issues");
+
+    // Get all issues
+    app.get("/issues", async (req, res) => {
+      const { status, limit = 0 } = req.query;
+      const query = {};
+      try {
+        if (status) {
+          query.status = status;
+        }
+        const result = await IssuesCollection.find(query)
+          .limit(Number(limit))
+          .toArray();
+        res.send(result);
+      } catch (err) {
+        res.status(500).send({ message: "Error fetching issues" });
+      }
+    });
+
+    //user related api
+    app.post("/users", (req, res) => {
+      const userData = req.body;
+      console.log(userData);
+    });
+
+    console.log("MongoDB Connected Successfully");
+  } catch (error) {
+    console.error("Database Error:", error);
   }
 }
-run().catch(console.dir);
+
+run();
 
 app.get("/", (req, res) => {
   res.send("Hello from Server..");
 });
 
 app.listen(port, () => {
-  console.log(`sertver running at http://localhost:${port}`);
+  console.log(`🚀 Server running at http://localhost:${port}`);
 });
