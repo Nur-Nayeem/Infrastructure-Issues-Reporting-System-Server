@@ -105,6 +105,22 @@ async function run() {
 
       res.send({ success: true, user });
     });
+    app.patch("/users/update/:email", async (req, res) => {
+      try {
+        const updatedData = req.body;
+        const email = req.params.email;
+
+        const result = await UsersCollection.updateOne(
+          { email },
+          { $set: updatedData }
+        );
+
+        res.send(result);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to update user" });
+      }
+    });
 
     console.log("MongoDB Connected Successfully");
   } catch (error) {
