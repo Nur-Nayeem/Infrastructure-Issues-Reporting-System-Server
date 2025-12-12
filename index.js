@@ -27,6 +27,7 @@ async function run() {
 
     const InfraDB = client.db("infraDB");
     const IssuesCollection = InfraDB.collection("issues");
+    const UsersCollection = InfraDB.collection("users");
 
     // Get all issues
     app.get("/issues", async (req, res) => {
@@ -45,10 +46,32 @@ async function run() {
       }
     });
 
-    //user related api
-    app.post("/users", (req, res) => {
-      const userData = req.body;
-      console.log(userData);
+    // user related api
+    app.post("/users", async (req, res) => {
+      const user = req.body;
+      user.role = "citizen";
+      user.createdAt = new Date();
+      user.issuesReported = 0;
+      user.isPremium = false;
+      const email = user.email;
+      const userExists = await UsersCollection.findOne({ email });
+
+      if (userExists) {
+        return res.send({ message: "user already exists" });
+      }
+      const result = await UsersCollection.insertOne(user);
+      res.send(result);
+    });
+
+    app.get("/users/:email", async (req, res) => {
+      const email = req.params.email;
+      const user = await UsersCollection.findOne({ email });
+
+      if (!user) {
+        return res.status(404).send({ success: false, user: null });
+      }
+
+      res.send({ success: true, user });
     });
 
     console.log("MongoDB Connected Successfully");
