@@ -46,21 +46,53 @@ async function run() {
       }
     });
 
-    // user related api
-    app.post("/users", async (req, res) => {
-      const user = req.body;
-      user.role = "citizen";
-      user.createdAt = new Date();
-      user.issuesReported = 0;
-      user.isPremium = false;
-      const email = user.email;
-      const userExists = await UsersCollection.findOne({ email });
+    app.post("/issues", async (req, res) => {
+      try {
+        const IssueData = req.body;
 
-      if (userExists) {
-        return res.send({ message: "user already exists" });
+        IssueData.priority = "low";
+        IssueData.status = "Pending";
+        IssueData.created_at = new Date();
+
+        console.log(IssueData);
+
+        // Insert issue
+        const result = await IssuesCollection.insertOne(IssueData);
+
+        // Update user's issue count
+        await UsersCollection.updateOne(
+          { email: IssueData.reported_by },
+          { $inc: { issuesReported: 1 } }
+        );
+
+        res.send(result);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ message: "Something went wrong" });
       }
-      const result = await UsersCollection.insertOne(user);
-      res.send(result);
+    });
+
+    //user related api
+    app.post("/users", async (req, res) => {
+      try {
+        const user = req.body;
+        user.role = "citizen";
+        user.createdAt = new Date();
+        user.issuesReported = 0;
+        user.isPremium = false;
+        user.isBlocked = false;
+        const email = user.email;
+        const userExists = await UsersCollection.findOne({ email });
+
+        if (userExists) {
+          return res.send({ message: "user already exists" });
+        }
+        const result = await UsersCollection.insertOne(user);
+        res.send(result);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ message: "Something went wrong" });
+      }
     });
 
     app.get("/users/:email", async (req, res) => {
