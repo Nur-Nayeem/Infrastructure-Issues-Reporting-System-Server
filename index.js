@@ -81,50 +81,27 @@ async function run() {
       }
     });
 
-    /***
-     *  try {
-        const { category, search, limit = 0, skip = 0, recent } = req.query;
-        let query = {};
+    app.get("/issues/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+        console.log(id);
 
-        if (category) {
-          query.category = category;
-        }
-        if (search) {
-          query.name = { $regex: search, $options: "i" };
-        }
-        const sort = {};
-        if (recent == "true") {
-          sort.createdAt = -1;
-        }
-        // sort.createdAt = -1;
-
-        const result = await allCollection
-          .find(query)
-          .sort(sort)
-          .limit(Number(limit))
-          .skip(Number(skip))
-          .project({ description: 0, email: 0 })
-          .toArray();
-
-        const count = await allCollection.countDocuments(query);
-
-        // res.send(result);
-        res.send({ result, total: count });
+        const Id = new ObjectId(id);
+        const result = await IssuesCollection.findOne({ _id: Id });
+        res.send(result);
       } catch (error) {
-        console.error("Error fetching listings:", error);
-        res.status(500).send({ message: "Internal Server Error" });
+        res.status(500).send({ message: error });
       }
-     * */
+    });
 
     app.post("/issues", async (req, res) => {
       try {
         const IssueData = req.body;
 
-        IssueData.priority = "low";
+        IssueData.priority = "Low";
         IssueData.status = "Pending";
-        IssueData.created_at = new Date();
-
-        console.log(IssueData);
+        IssueData.createdAt = new Date();
+        IssueData.upvoted = 0;
 
         // Insert issue
         const result = await IssuesCollection.insertOne(IssueData);
@@ -149,6 +126,18 @@ async function run() {
         { _id: Id },
         {
           $set: { status: "Rejected" },
+        }
+      );
+      res.send(result);
+    });
+
+    app.patch("/issues/:issueId/boosted", async (req, res) => {
+      const { issueId } = req.params;
+      const Id = new ObjectId(issueId);
+      const result = await IssuesCollection.updateOne(
+        { _id: Id },
+        {
+          $set: { priority: "High" },
         }
       );
       res.send(result);
