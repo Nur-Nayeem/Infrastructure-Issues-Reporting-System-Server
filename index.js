@@ -380,6 +380,30 @@ async function run() {
         res.status(500).send({ error: "Failed to update user" });
       }
     });
+    app.patch("/users/:userId/subscribe", async (req, res) => {
+      try {
+        const { userId } = req.params;
+        const Uid = new ObjectId(userId);
+
+        const result = await UsersCollection.updateOne(
+          { _id: Uid },
+          {
+            $set: { isPremium: true, subscriptionDate: new Date() },
+          }
+        );
+
+        res.send({
+          success: true,
+          message: "User subscribed successfully",
+          result,
+        });
+      } catch (error) {
+        res.status(500).send({
+          success: false,
+          message: "Subscription failed",
+        });
+      }
+    });
 
     console.log("MongoDB Connected Successfully");
   } catch (error) {
