@@ -173,6 +173,38 @@ async function run() {
       }
     });
 
+    app.patch("/issues/:issueId/upvote", async (req, res) => {
+      try {
+        const { issueId } = req.params;
+        const { email } = req.body;
+        const Id = new ObjectId(issueId);
+
+        // Prevent duplicate upvote
+        const issue = await IssuesCollection.findOne({
+          _id: Id,
+          "upvotedUsers.email": email,
+        });
+
+        if (issue) {
+          return res.status(400).send({ message: "Already upvoted" });
+        }
+
+        const result = await IssuesCollection.updateOne(
+          { _id: Id },
+          {
+            $inc: { upvoted: 1 },
+            $push: {
+              upvotedUsers: { email },
+            },
+          }
+        );
+
+        res.send({ success: true, result });
+      } catch (error) {
+        res.status(500).send({ message: "Upvote failed" });
+      }
+    });
+
     app.patch("/issues/:issueId/assign-staff", async (req, res) => {
       try {
         const { issueId } = req.params;
