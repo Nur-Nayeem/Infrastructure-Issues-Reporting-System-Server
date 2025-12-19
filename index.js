@@ -35,6 +35,7 @@ async function run() {
     const InfraDB = client.db("infraDB");
     const IssuesCollection = InfraDB.collection("issues");
     const UsersCollection = InfraDB.collection("users");
+    const StaffCollection = InfraDB.collection("staff");
 
     // Get all issues
     app.get("/issues", async (req, res) => {
@@ -47,8 +48,12 @@ async function run() {
           limit = 0,
           skip = 0,
           recent,
+          email,
         } = req.query;
         let query = {};
+        if (email) {
+          query.reportedBy = email;
+        }
         if (category) {
           query.category = category;
         }
@@ -93,6 +98,18 @@ async function run() {
         res.status(500).send({ message: error });
       }
     });
+    app.delete("/issues/:id", async (req, res) => {
+      try {
+        const { id } = req.params;
+        console.log(id);
+
+        const Id = new ObjectId(id);
+        const result = await IssuesCollection.deleteOne({ _id: Id });
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ message: error });
+      }
+    });
 
     app.post("/issues", async (req, res) => {
       try {
@@ -108,7 +125,7 @@ async function run() {
 
         // Update user's issue count
         await UsersCollection.updateOne(
-          { email: IssueData.reported_by },
+          { email: IssueData.reportedBy },
           { $inc: { issuesReported: 1 } }
         );
 
@@ -228,7 +245,13 @@ async function run() {
 
     // GET all staff
     app.get("/staff", async (req, res) => {
-      const result = await UsersCollection.find({ role: "staff" }).toArray();
+      const { status } = req.query;
+      const query = {};
+      query.role = "staff";
+      if (status) {
+        query.status = status;
+      }
+      const result = await UsersCollection.find(query).toArray();
       res.send(result);
     });
 
