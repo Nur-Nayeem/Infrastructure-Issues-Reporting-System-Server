@@ -49,6 +49,7 @@ async function run() {
           skip = 0,
           recent,
           email,
+          assignedto,
         } = req.query;
         let query = {};
         if (email) {
@@ -66,10 +67,14 @@ async function run() {
         if (search) {
           query.title = { $regex: search, $options: "i" };
         }
+        if (assignedto) {
+          query.assignedTo = assignedto;
+        }
         const sort = {};
         if (recent == "true") {
           sort.created_at = -1;
         }
+
         const result = await IssuesCollection.find(query)
           .sort(sort)
           .limit(Number(limit))
@@ -120,10 +125,16 @@ async function run() {
         IssueData.createdAt = new Date();
         IssueData.upvoted = 0;
 
-        // Insert issue
+        IssueData.statusTimeline = [
+          {
+            status: "Pending",
+            changedAt: new Date(),
+            changedBy: IssueData.reportedBy,
+          },
+        ];
+
         const result = await IssuesCollection.insertOne(IssueData);
 
-        // Update user's issue count
         await UsersCollection.updateOne(
           { email: IssueData.reportedBy },
           { $inc: { issuesReported: 1 } }
@@ -131,8 +142,34 @@ async function run() {
 
         res.send(result);
       } catch (err) {
-        console.error(err);
         res.status(500).send({ message: "Something went wrong" });
+      }
+    });
+
+    app.patch("/issues/:issueId/status", async (req, res) => {
+      try {
+        const { issueId } = req.params;
+        const { status, userEmail } = req.body;
+
+        const Id = new ObjectId(issueId);
+
+        const result = await IssuesCollection.updateOne(
+          { _id: Id },
+          {
+            $set: { status },
+            $push: {
+              statusTimeline: {
+                status,
+                changedAt: new Date(),
+                changedBy: userEmail,
+              },
+            },
+          }
+        );
+
+        res.send(result);
+      } catch (err) {
+        res.status(500).send({ message: "Failed to update status" });
       }
     });
 
@@ -142,16 +179,10 @@ async function run() {
         const { staffEmail } = req.body;
 
         const Id = new ObjectId(issueId);
-        await UsersCollection.updateOne(
-          { email: staffEmail },
-          {
-            $set: { status: "inactive" },
-          }
-        );
         const result = await IssuesCollection.updateOne(
           { _id: Id },
           {
-            $set: { status: "In-Progress", assignedTo: staffEmail },
+            $set: { assignedTo: staffEmail, assignedAt: new Date() },
           }
         );
         res.send(result);
@@ -183,6 +214,7 @@ async function run() {
       );
       res.send(result);
     });
+
     //user related api
     app.post("/users", async (req, res) => {
       try {
