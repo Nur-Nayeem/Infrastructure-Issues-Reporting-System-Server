@@ -136,6 +136,30 @@ async function run() {
       }
     });
 
+    app.patch("/issues/:issueId/assign-staff", async (req, res) => {
+      try {
+        const { issueId } = req.params;
+        const { staffEmail } = req.body;
+
+        const Id = new ObjectId(issueId);
+        await UsersCollection.updateOne(
+          { email: staffEmail },
+          {
+            $set: { status: "inactive" },
+          }
+        );
+        const result = await IssuesCollection.updateOne(
+          { _id: Id },
+          {
+            $set: { status: "In-Progress", assignedTo: staffEmail },
+          }
+        );
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ message: error });
+      }
+    });
+
     app.patch("/issues/:issueId/rejected", async (req, res) => {
       const { issueId } = req.params;
       const Id = new ObjectId(issueId);
