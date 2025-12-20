@@ -4,6 +4,7 @@ require("dotenv").config();
 
 const serviceAccount = require("./infraFbJson.json");
 const admin = require("firebase-admin");
+const stripe = require("stripe")(process.env.STRIPE_SECRET);
 
 const port = process.env.PORT || 4000;
 const app = express();
@@ -431,6 +432,75 @@ async function run() {
           success: false,
           message: "Subscription failed",
         });
+      }
+    });
+
+    // issues boost related api
+    app.post("/payment-checkout-session", async (req, res) => {
+      const { issueId, userId } = req.body;
+
+      try {
+        const session = await stripe.checkout.sessions.create({
+          payment_method_types: ["card"],
+          mode: "payment",
+          line_items: [
+            {
+              price_data: {
+                currency: "bdt",
+                product_data: {
+                  name: "Boost Issue",
+                  description: "Boost issue",
+                },
+                unit_amount: 10000, // ৳100.00
+              },
+              quantity: 1,
+            },
+          ],
+          success_url: `${process.env.CLIENT_URL}/payment-success?issueId=${issueId}`,
+          cancel_url: `${process.env.CLIENT_URL}/payment-cancel`,
+          metadata: {
+            issueId,
+            userId,
+          },
+        });
+
+        res.send({ url: session.url });
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+
+    // user subcription related api
+    app.post("/subscriptions/checkout", async (req, res) => {
+      const { userId } = req.body;
+
+      try {
+        const session = await stripe.checkout.sessions.create({
+          payment_method_types: ["card"],
+          mode: "payment",
+          line_items: [
+            {
+              price_data: {
+                currency: "bdt",
+                product_data: {
+                  name: "Premium Subscription",
+                  description: "One-time premium access",
+                },
+                unit_amount: 100000, // ৳1000
+              },
+              quantity: 1,
+            },
+          ],
+          success_url: `${process.env.CLIENT_URL}/subscription-success?userId=${userId}`,
+          cancel_url: `${process.env.CLIENT_URL}/subscription-cancel`,
+          metadata: {
+            userId,
+          },
+        });
+
+        res.send({ url: session.url });
+      } catch (err) {
+        res.status(500).send({ message: err.message });
       }
     });
 
