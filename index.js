@@ -79,7 +79,7 @@ async function run() {
           .sort(sort)
           .limit(Number(limit))
           .skip(Number(skip))
-          .project({ description: 0, updated_at: 0 })
+          .project({ updated_at: 0 })
           .toArray();
 
         const count = await IssuesCollection.countDocuments(query);
@@ -143,6 +143,24 @@ async function run() {
         res.send(result);
       } catch (err) {
         res.status(500).send({ message: "Something went wrong" });
+      }
+    });
+
+    app.patch("/issues/:issueId", async (req, res) => {
+      try {
+        const { issueId } = req.params;
+        const body = req.body;
+
+        const { _id, ...updatedIssue } = body;
+        const filter = { _id: new ObjectId(issueId) };
+        const updateDoc = {
+          $set: updatedIssue,
+        };
+        const result = await IssuesCollection.updateOne(filter, updateDoc);
+        res.send(result);
+      } catch (err) {
+        console.error(err); // Log the actual error for debugging
+        res.status(500).send({ message: "Failed to update issue" });
       }
     });
 
