@@ -50,6 +50,7 @@ async function run() {
           recent,
           email,
           assignedto,
+          reportedby,
         } = req.query;
         let query = {};
         if (email) {
@@ -66,6 +67,9 @@ async function run() {
         }
         if (search) {
           query.title = { $regex: search, $options: "i" };
+        }
+        if (reportedby) {
+          query.reportedBy = reportedby;
         }
         if (assignedto) {
           query.assignedTo = assignedto;
@@ -288,8 +292,15 @@ async function run() {
     });
 
     app.get("/users", async (req, res) => {
-      const { role } = req.query;
-      const result = await UsersCollection.find({ role }).toArray();
+      const { role, status } = req.query;
+      const query = {};
+      if (role) {
+        query.role = role;
+      }
+      if (status) {
+        query.status = status;
+      }
+      const result = await UsersCollection.find(query).toArray();
       res.send(result);
     });
     app.patch("/users/:email/blocked", async (req, res) => {
