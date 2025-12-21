@@ -565,6 +565,20 @@ async function run() {
       }
     });
 
+    app.get("/payments", async (req, res) => {
+      const result = await PaymentsCollection.find({})
+        .sort({ createdAt: -1 })
+        .toArray();
+      res.send(result);
+    });
+    app.get("/payments/user/:userId", async (req, res) => {
+      const { userId } = req.params;
+      const result = await PaymentsCollection.findOne({ userId })
+        .sort({ createdAt: -1 })
+        .toArray();
+      res.send(result);
+    });
+
     console.log("MongoDB Connected Successfully");
   } catch (error) {
     console.error("Database Error:", error);
