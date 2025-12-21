@@ -36,7 +36,7 @@ async function run() {
     const InfraDB = client.db("infraDB");
     const IssuesCollection = InfraDB.collection("issues");
     const UsersCollection = InfraDB.collection("users");
-    const StaffCollection = InfraDB.collection("staff");
+    const PaymentsCollection = InfraDB.collection("payments");
 
     // Get all issues
     app.get("/issues", async (req, res) => {
@@ -456,7 +456,7 @@ async function run() {
               quantity: 1,
             },
           ],
-          success_url: `${process.env.CLIENT_URL}/payment-success?issueId=${issueId}`,
+          success_url: `${process.env.CLIENT_URL}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
           cancel_url: `${process.env.CLIENT_URL}/payment-cancel`,
           metadata: {
             issueId,
@@ -491,7 +491,7 @@ async function run() {
               quantity: 1,
             },
           ],
-          success_url: `${process.env.CLIENT_URL}/subscription-success?userId=${userId}`,
+          success_url: `${process.env.CLIENT_URL}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
           cancel_url: `${process.env.CLIENT_URL}/subscription-cancel`,
           metadata: {
             userId,
@@ -501,6 +501,67 @@ async function run() {
         res.send({ url: session.url });
       } catch (err) {
         res.status(500).send({ message: err.message });
+      }
+    });
+
+    //confirm payment api
+    app.post("/payments/confirm", async (req, res) => {
+      const { sessionId } = req.body;
+
+      try {
+        const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+        if (session.payment_status !== "paid") {
+          return res.status(400).send({ message: "Payment not completed" });
+        }
+
+        const exists = await PaymentsCollection.findOne({
+          paymentId: session.id,
+        });
+
+        if (exists) {
+          return res.send({ message: "Payment already saved" });
+        }
+
+        // save
+        await PaymentsCollection.insertOne({
+          paymentId: session.id,
+          userId: session.metadata.userId,
+          issueId: session.metadata.issueId || null,
+          amount: session.amount_total / 100,
+          currency: session.currency,
+          paymentType: session.metadata.issueId
+            ? "ISSUE_BOOST"
+            : "SUBSCRIPTION",
+          status: "SUCCESS",
+          createdAt: new Date(),
+        });
+
+        // boost issues
+        if (session.metadata.issueId) {
+          await IssuesCollection.updateOne(
+            { _id: new ObjectId(session.metadata.issueId) },
+            { $set: { priority: "High", boostedAt: new Date() } }
+          );
+        }
+
+        // active premium
+        if (!session.metadata.issueId) {
+          await UsersCollection.updateOne(
+            { _id: new ObjectId(session.metadata.userId) },
+            {
+              $set: {
+                isPremium: true,
+                subscriptionDate: new Date(),
+              },
+            }
+          );
+        }
+
+        res.send({ success: true });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ message: "Payment verification failed" });
       }
     });
 
