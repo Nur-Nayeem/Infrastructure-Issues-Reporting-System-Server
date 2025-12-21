@@ -28,6 +28,22 @@ admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
 });
 
+const verifyTokenWithFirebase = async (req, res, next) => {
+  const authorization = req.headers.authorization;
+  if (!authorization) {
+    return res.status(401).send({ message: "unauthorized access" });
+  }
+  const token = authorization.split(" ")[1];
+  if (!token) {
+    return res.status(401).send({ message: "unauthorized access" });
+  }
+  const userInfo = await admin.auth().verifyIdToken(token);
+
+  req.token_email = userInfo.email;
+
+  next();
+};
+
 async function run() {
   try {
     // Connect once
@@ -37,6 +53,39 @@ async function run() {
     const IssuesCollection = InfraDB.collection("issues");
     const UsersCollection = InfraDB.collection("users");
     const PaymentsCollection = InfraDB.collection("payments");
+
+    //rolebase middleware
+    const verifyADMIN = async (req, res, next) => {
+      console.log(req.tokenEmail);
+
+      const email = req.tokenEmail;
+      const user = await UsersCollection.findOne({ email });
+      if (user?.role !== "admin")
+        return res
+          .status(403)
+          .send({ message: "Admin only Actions!", role: user?.role });
+
+      next();
+    };
+
+    // const verifySTAFF = async (req, res, next) => {
+    //   const email = req.tokenEmail;
+    //   const user = await UsersCollection.findOne({ email });
+    //   if (user?.role !== "staff")
+    //     return res
+    //       .status(403)
+    //       .send({ message: "Staff only Actions!", role: user?.role });
+
+    //   next();
+    // };
+
+    //role geting api
+    app.get("/users/:email/role", async (req, res) => {
+      const email = req.params.email;
+      const query = { email };
+      const user = await UsersCollection.findOne(query);
+      res.send({ role: user?.role || "user" });
+    });
 
     // Get all issues
     app.get("/issues", async (req, res) => {
@@ -77,7 +126,7 @@ async function run() {
         }
         const sort = {};
         if (recent == "true") {
-          sort.created_at = -1;
+          sort.createdAt = -1;
         }
 
         const result = await IssuesCollection.find(query)
@@ -96,11 +145,21 @@ async function run() {
       }
     });
 
+    app.get("/my-issues/:email", verifyTokenWithFirebase, async (req, res) => {
+      try {
+        const { email } = req.params;
+        const result = await IssuesCollection.find({ reportedBy: email })
+          .sort({ createdAt: -1 })
+          .toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ message: error });
+      }
+    });
+
     app.get("/issues/:id", async (req, res) => {
       try {
         const { id } = req.params;
-        console.log(id);
-
         const Id = new ObjectId(id);
         const result = await IssuesCollection.findOne({ _id: Id });
         res.send(result);
@@ -108,11 +167,9 @@ async function run() {
         res.status(500).send({ message: error });
       }
     });
-    app.delete("/issues/:id", async (req, res) => {
+    app.delete("/issues/:id", verifyTokenWithFirebase, async (req, res) => {
       try {
         const { id } = req.params;
-        console.log(id);
-
         const Id = new ObjectId(id);
         const result = await IssuesCollection.deleteOne({ _id: Id });
         res.send(result);
@@ -121,7 +178,7 @@ async function run() {
       }
     });
 
-    app.post("/issues", async (req, res) => {
+    app.post("/issues", verifyTokenWithFirebase, async (req, res) => {
       try {
         const IssueData = req.body;
 
@@ -151,7 +208,7 @@ async function run() {
       }
     });
 
-    app.patch("/issues/:issueId", async (req, res) => {
+    app.patch("/issues/:issueId", verifyTokenWithFirebase, async (req, res) => {
       try {
         const { issueId } = req.params;
         const body = req.body;
@@ -169,32 +226,36 @@ async function run() {
       }
     });
 
-    app.patch("/issues/:issueId/status", async (req, res) => {
-      try {
-        const { issueId } = req.params;
-        const { status, userEmail } = req.body;
+    app.patch(
+      "/issues/:issueId/status",
+      verifyTokenWithFirebase,
+      async (req, res) => {
+        try {
+          const { issueId } = req.params;
+          const { status, userEmail } = req.body;
 
-        const Id = new ObjectId(issueId);
+          const Id = new ObjectId(issueId);
 
-        const result = await IssuesCollection.updateOne(
-          { _id: Id },
-          {
-            $set: { status },
-            $push: {
-              statusTimeline: {
-                status,
-                changedAt: new Date(),
-                changedBy: userEmail,
+          const result = await IssuesCollection.updateOne(
+            { _id: Id },
+            {
+              $set: { status },
+              $push: {
+                statusTimeline: {
+                  status,
+                  changedAt: new Date(),
+                  changedBy: userEmail,
+                },
               },
-            },
-          }
-        );
+            }
+          );
 
-        res.send(result);
-      } catch (err) {
-        res.status(500).send({ message: "Failed to update status" });
+          res.send(result);
+        } catch (err) {
+          res.status(500).send({ message: "Failed to update status" });
+        }
       }
-    });
+    );
 
     app.patch("/issues/:issueId/upvote", async (req, res) => {
       try {
@@ -228,47 +289,66 @@ async function run() {
       }
     });
 
-    app.patch("/issues/:issueId/assign-staff", async (req, res) => {
-      try {
-        const { issueId } = req.params;
-        const { staffEmail } = req.body;
+    app.patch(
+      "/issues/:issueId/assign-staff",
+      verifyTokenWithFirebase,
+      async (req, res) => {
+        try {
+          const { issueId } = req.params;
+          const { staffEmail } = req.body;
 
+          const Id = new ObjectId(issueId);
+          const result = await IssuesCollection.updateOne(
+            { _id: Id },
+            {
+              $set: { assignedTo: staffEmail, assignedAt: new Date() },
+            }
+          );
+          res.send(result);
+        } catch (error) {
+          res.status(500).send({ message: error });
+        }
+      }
+    );
+
+    app.patch(
+      "/issues/:issueId/rejected",
+      verifyTokenWithFirebase,
+      async (req, res) => {
+        const { issueId } = req.params;
         const Id = new ObjectId(issueId);
         const result = await IssuesCollection.updateOne(
           { _id: Id },
           {
-            $set: { assignedTo: staffEmail, assignedAt: new Date() },
+            $set: { status: "Rejected" },
+            $push: {
+              statusTimeline: {
+                status: "Rejected",
+                changedAt: new Date(),
+                changedBy: "admin",
+              },
+            },
           }
         );
         res.send(result);
-      } catch (error) {
-        res.status(500).send({ message: error });
       }
-    });
+    );
 
-    app.patch("/issues/:issueId/rejected", async (req, res) => {
-      const { issueId } = req.params;
-      const Id = new ObjectId(issueId);
-      const result = await IssuesCollection.updateOne(
-        { _id: Id },
-        {
-          $set: { status: "Rejected" },
-        }
-      );
-      res.send(result);
-    });
-
-    app.patch("/issues/:issueId/boosted", async (req, res) => {
-      const { issueId } = req.params;
-      const Id = new ObjectId(issueId);
-      const result = await IssuesCollection.updateOne(
-        { _id: Id },
-        {
-          $set: { priority: "High" },
-        }
-      );
-      res.send(result);
-    });
+    app.patch(
+      "/issues/:issueId/boosted",
+      verifyTokenWithFirebase,
+      async (req, res) => {
+        const { issueId } = req.params;
+        const Id = new ObjectId(issueId);
+        const result = await IssuesCollection.updateOne(
+          { _id: Id },
+          {
+            $set: { priority: "High" },
+          }
+        );
+        res.send(result);
+      }
+    );
 
     //user related api
     app.post("/users", async (req, res) => {
@@ -304,25 +384,29 @@ async function run() {
       const result = await UsersCollection.find(query).toArray();
       res.send(result);
     });
-    app.patch("/users/:email/blocked", async (req, res) => {
-      const { email } = req.params;
-      console.log(email);
+    app.patch(
+      "/users/:email/blocked",
+      verifyTokenWithFirebase,
+      async (req, res) => {
+        const { email } = req.params;
+        console.log(email);
 
-      const user = await UsersCollection.findOne({ email });
-      console.log(user);
+        const user = await UsersCollection.findOne({ email });
+        console.log(user);
 
-      const result = await UsersCollection.updateOne(
-        { email },
-        {
-          $set: {
-            isBlocked: !user.isBlocked,
-          },
-        }
-      );
-      res.send(result);
-    });
+        const result = await UsersCollection.updateOne(
+          { email },
+          {
+            $set: {
+              isBlocked: !user.isBlocked,
+            },
+          }
+        );
+        res.send(result);
+      }
+    );
 
-    app.post("/create-staff", async (req, res) => {
+    app.post("/create-staff", verifyTokenWithFirebase, async (req, res) => {
       const { name, email, password, phone, photoURL } = req.body;
 
       try {
@@ -362,7 +446,7 @@ async function run() {
     });
 
     // GET all staff
-    app.get("/staff", async (req, res) => {
+    app.get("/staff", verifyTokenWithFirebase, async (req, res) => {
       const { status } = req.query;
       const query = {};
       query.role = "staff";
@@ -374,7 +458,7 @@ async function run() {
     });
 
     // UPDATE staff
-    app.patch("/staff/:email", async (req, res) => {
+    app.patch("/staff/:email", verifyTokenWithFirebase, async (req, res) => {
       const email = req.params.email;
       const updateData = req.body;
 
@@ -387,122 +471,138 @@ async function run() {
     });
 
     // DELETE staff
-    app.delete("/staff/:email", async (req, res) => {
+    app.delete("/staff/:email", verifyTokenWithFirebase, async (req, res) => {
       const email = req.params.email;
 
       const result = await UsersCollection.deleteOne({ email });
       res.send(result);
     });
 
-    app.patch("/users/update/:email", async (req, res) => {
-      try {
-        const updatedData = req.body;
-        const email = req.params.email;
+    app.patch(
+      "/users/update/:email",
 
-        const result = await UsersCollection.updateOne(
-          { email },
-          { $set: updatedData }
-        );
+      async (req, res) => {
+        try {
+          const updatedData = req.body;
+          const email = req.params.email;
 
-        res.send(result);
-      } catch (err) {
-        console.error(err);
-        res.status(500).send({ error: "Failed to update user" });
+          const result = await UsersCollection.updateOne(
+            { email },
+            { $set: updatedData }
+          );
+
+          res.send(result);
+        } catch (err) {
+          console.error(err);
+          res.status(500).send({ error: "Failed to update user" });
+        }
       }
-    });
-    app.patch("/users/:userId/subscribe", async (req, res) => {
-      try {
-        const { userId } = req.params;
-        const Uid = new ObjectId(userId);
+    );
+    app.patch(
+      "/users/:userId/subscribe",
+      verifyTokenWithFirebase,
+      async (req, res) => {
+        try {
+          const { userId } = req.params;
+          const Uid = new ObjectId(userId);
 
-        const result = await UsersCollection.updateOne(
-          { _id: Uid },
-          {
-            $set: { isPremium: true, subscriptionDate: new Date() },
-          }
-        );
+          const result = await UsersCollection.updateOne(
+            { _id: Uid },
+            {
+              $set: { isPremium: true, subscriptionDate: new Date() },
+            }
+          );
 
-        res.send({
-          success: true,
-          message: "User subscribed successfully",
-          result,
-        });
-      } catch (error) {
-        res.status(500).send({
-          success: false,
-          message: "Subscription failed",
-        });
+          res.send({
+            success: true,
+            message: "User subscribed successfully",
+            result,
+          });
+        } catch (error) {
+          res.status(500).send({
+            success: false,
+            message: "Subscription failed",
+          });
+        }
       }
-    });
+    );
 
     // issues boost related api
-    app.post("/payment-checkout-session", async (req, res) => {
-      const { issueId, userId } = req.body;
+    app.post(
+      "/payment-checkout-session",
+      verifyTokenWithFirebase,
+      async (req, res) => {
+        const { issueId, userId } = req.body;
 
-      try {
-        const session = await stripe.checkout.sessions.create({
-          payment_method_types: ["card"],
-          mode: "payment",
-          line_items: [
-            {
-              price_data: {
-                currency: "bdt",
-                product_data: {
-                  name: "Boost Issue",
-                  description: "Boost issue",
+        try {
+          const session = await stripe.checkout.sessions.create({
+            payment_method_types: ["card"],
+            mode: "payment",
+            line_items: [
+              {
+                price_data: {
+                  currency: "bdt",
+                  product_data: {
+                    name: "Boost Issue",
+                    description: "Boost issue",
+                  },
+                  unit_amount: 10000, // ৳100.00
                 },
-                unit_amount: 10000, // ৳100.00
+                quantity: 1,
               },
-              quantity: 1,
+            ],
+            success_url: `${process.env.CLIENT_URL}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+            cancel_url: `${process.env.CLIENT_URL}/payment-cancel`,
+            metadata: {
+              issueId,
+              userId,
             },
-          ],
-          success_url: `${process.env.CLIENT_URL}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
-          cancel_url: `${process.env.CLIENT_URL}/payment-cancel`,
-          metadata: {
-            issueId,
-            userId,
-          },
-        });
+          });
 
-        res.send({ url: session.url });
-      } catch (error) {
-        res.status(500).send({ error: error.message });
+          res.send({ url: session.url });
+        } catch (error) {
+          res.status(500).send({ error: error.message });
+        }
       }
-    });
+    );
 
     // user subcription related api
-    app.post("/subscriptions/checkout", async (req, res) => {
-      const { userId } = req.body;
+    app.post(
+      "/subscriptions/checkout",
+      verifyTokenWithFirebase,
+      async (req, res) => {
+        const { userId } = req.body;
 
-      try {
-        const session = await stripe.checkout.sessions.create({
-          payment_method_types: ["card"],
-          mode: "payment",
-          line_items: [
-            {
-              price_data: {
-                currency: "bdt",
-                product_data: {
-                  name: "Premium Subscription",
-                  description: "One-time premium access",
+        try {
+          const session = await stripe.checkout.sessions.create({
+            payment_method_types: ["card"],
+            mode: "payment",
+            line_items: [
+              {
+                price_data: {
+                  currency: "bdt",
+                  product_data: {
+                    name: "Premium Subscription",
+                    description: "One-time premium access",
+                  },
+                  unit_amount: 100000, // ৳1000
                 },
-                unit_amount: 100000, // ৳1000
+                quantity: 1,
               },
-              quantity: 1,
+            ],
+            success_url: `${process.env.CLIENT_URL}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+            cancel_url: `${process.env.CLIENT_URL}/subscription-cancel`,
+            metadata: {
+              userId,
             },
-          ],
-          success_url: `${process.env.CLIENT_URL}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
-          cancel_url: `${process.env.CLIENT_URL}/subscription-cancel`,
-          metadata: {
-            userId,
-          },
-        });
+          });
 
-        res.send({ url: session.url });
-      } catch (err) {
-        res.status(500).send({ message: err.message });
+          res.send({ url: session.url });
+        } catch (err) {
+          res.status(500).send({ message: err.message });
+        }
       }
-    });
+    );
 
     //confirm payment api
     app.post("/payments/confirm", async (req, res) => {
@@ -565,19 +665,23 @@ async function run() {
       }
     });
 
-    app.get("/payments", async (req, res) => {
+    app.get("/payments", verifyTokenWithFirebase, async (req, res) => {
       const result = await PaymentsCollection.find({})
         .sort({ createdAt: -1 })
         .toArray();
       res.send(result);
     });
-    app.get("/payments/user/:userId", async (req, res) => {
-      const { userId } = req.params;
-      const result = await PaymentsCollection.findOne({ userId })
-        .sort({ createdAt: -1 })
-        .toArray();
-      res.send(result);
-    });
+    app.get(
+      "/payments/user/:userId",
+      verifyTokenWithFirebase,
+      async (req, res) => {
+        const { userId } = req.params;
+        const result = await PaymentsCollection.findOne({ userId })
+          .sort({ createdAt: -1 })
+          .toArray();
+        res.send(result);
+      }
+    );
 
     console.log("MongoDB Connected Successfully");
   } catch (error) {
