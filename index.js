@@ -2,7 +2,7 @@ const express = require("express");
 const cors = require("cors");
 require("dotenv").config();
 
-const serviceAccount = require("./infraFbJson.json");
+// const serviceAccount = require("./infraFbJson.json");
 const admin = require("firebase-admin");
 const stripe = require("stripe")(process.env.STRIPE_SECRET);
 
@@ -23,6 +23,11 @@ const client = new MongoClient(uri, {
     deprecationErrors: true,
   },
 });
+
+const decoded = Buffer.from(process.env.FB_SERVICE_KEY, "base64").toString(
+  "utf8"
+);
+const serviceAccount = JSON.parse(decoded);
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
@@ -47,7 +52,7 @@ const verifyTokenWithFirebase = async (req, res, next) => {
 async function run() {
   try {
     // Connect once
-    await client.connect();
+    // await client.connect();
 
     const InfraDB = client.db("infraDB");
     const IssuesCollection = InfraDB.collection("issues");
@@ -56,28 +61,35 @@ async function run() {
 
     //rolebase middleware
     const verifyADMIN = async (req, res, next) => {
-      console.log(req.tokenEmail);
-
-      const email = req.tokenEmail;
+      const email = req.token_email;
+      if (!email) {
+        return res.status(401).send({ message: "unauthorized access" });
+      }
       const user = await UsersCollection.findOne({ email });
-      if (user?.role !== "admin")
+      if (!user || user.role !== "admin") {
         return res
           .status(403)
           .send({ message: "Admin only Actions!", role: user?.role });
+      }
 
       next();
     };
 
-    // const verifySTAFF = async (req, res, next) => {
-    //   const email = req.tokenEmail;
-    //   const user = await UsersCollection.findOne({ email });
-    //   if (user?.role !== "staff")
-    //     return res
-    //       .status(403)
-    //       .send({ message: "Staff only Actions!", role: user?.role });
+    const verifySTAFF = async (req, res, next) => {
+      const email = req.token_email;
+      if (!email) {
+        return res.status(401).send({ message: "unauthorized access" });
+      }
 
-    //   next();
-    // };
+      const user = await UsersCollection.findOne({ email });
+      if (!user || user.role !== "staff") {
+        return res
+          .status(403)
+          .send({ message: "Staff only Actions!", role: user?.role });
+      }
+
+      next();
+    };
 
     //role geting api
     app.get("/users/:email/role", async (req, res) => {
@@ -229,6 +241,7 @@ async function run() {
     app.patch(
       "/issues/:issueId/status",
       verifyTokenWithFirebase,
+      verifySTAFF,
       async (req, res) => {
         try {
           const { issueId } = req.params;
@@ -257,41 +270,46 @@ async function run() {
       }
     );
 
-    app.patch("/issues/:issueId/upvote", async (req, res) => {
-      try {
-        const { issueId } = req.params;
-        const { email } = req.body;
-        const Id = new ObjectId(issueId);
+    app.patch(
+      "/issues/:issueId/upvote",
+      verifyTokenWithFirebase,
+      async (req, res) => {
+        try {
+          const { issueId } = req.params;
+          const { email } = req.body;
+          const Id = new ObjectId(issueId);
 
-        // Prevent duplicate upvote
-        const issue = await IssuesCollection.findOne({
-          _id: Id,
-          "upvotedUsers.email": email,
-        });
+          // Prevent duplicate upvote
+          const issue = await IssuesCollection.findOne({
+            _id: Id,
+            "upvotedUsers.email": email,
+          });
 
-        if (issue) {
-          return res.status(400).send({ message: "Already upvoted" });
-        }
-
-        const result = await IssuesCollection.updateOne(
-          { _id: Id },
-          {
-            $inc: { upvoted: 1 },
-            $push: {
-              upvotedUsers: { email },
-            },
+          if (issue) {
+            return res.status(400).send({ message: "Already upvoted" });
           }
-        );
 
-        res.send({ success: true, result });
-      } catch (error) {
-        res.status(500).send({ message: "Upvote failed" });
+          const result = await IssuesCollection.updateOne(
+            { _id: Id },
+            {
+              $inc: { upvoted: 1 },
+              $push: {
+                upvotedUsers: { email },
+              },
+            }
+          );
+
+          res.send({ success: true, result });
+        } catch (error) {
+          res.status(500).send({ message: "Upvote failed" });
+        }
       }
-    });
+    );
 
     app.patch(
       "/issues/:issueId/assign-staff",
       verifyTokenWithFirebase,
+      verifyADMIN,
       async (req, res) => {
         try {
           const { issueId } = req.params;
@@ -302,6 +320,13 @@ async function run() {
             { _id: Id },
             {
               $set: { assignedTo: staffEmail, assignedAt: new Date() },
+              $push: {
+                statusTimeline: {
+                  status: "Assigned Staff",
+                  changedAt: new Date(),
+                  changedBy: "Admin",
+                },
+              },
             }
           );
           res.send(result);
@@ -314,6 +339,7 @@ async function run() {
     app.patch(
       "/issues/:issueId/rejected",
       verifyTokenWithFirebase,
+      verifyADMIN,
       async (req, res) => {
         const { issueId } = req.params;
         const Id = new ObjectId(issueId);
@@ -372,21 +398,29 @@ async function run() {
       }
     });
 
-    app.get("/users", async (req, res) => {
-      const { role, status } = req.query;
-      const query = {};
-      if (role) {
-        query.role = role;
+    app.get(
+      "/users",
+      verifyTokenWithFirebase,
+      verifyADMIN,
+      async (req, res) => {
+        const { role, status } = req.query;
+        const query = {};
+        if (role) {
+          query.role = role;
+        }
+        if (status) {
+          query.status = status;
+        }
+        const result = await UsersCollection.find(query)
+          .sort({ createdAt: -1 })
+          .toArray();
+        res.send(result);
       }
-      if (status) {
-        query.status = status;
-      }
-      const result = await UsersCollection.find(query).toArray();
-      res.send(result);
-    });
+    );
     app.patch(
       "/users/:email/blocked",
       verifyTokenWithFirebase,
+      verifyADMIN,
       async (req, res) => {
         const { email } = req.params;
         console.log(email);
@@ -406,33 +440,38 @@ async function run() {
       }
     );
 
-    app.post("/create-staff", verifyTokenWithFirebase, async (req, res) => {
-      const { name, email, password, phone, photoURL } = req.body;
+    app.post(
+      "/create-staff",
+      verifyTokenWithFirebase,
+      verifyADMIN,
+      async (req, res) => {
+        const { name, email, password, phone, photoURL } = req.body;
 
-      try {
-        const user = await admin.auth().createUser({
-          email,
-          password,
-          displayName: name,
-          photoURL,
-        });
+        try {
+          const user = await admin.auth().createUser({
+            email,
+            password,
+            displayName: name,
+            photoURL,
+          });
 
-        await UsersCollection.insertOne({
-          uid: user.uid,
-          displayName: name,
-          email,
-          phone,
-          photoURL,
-          status: "active",
-          role: "staff",
-          createdAt: new Date(),
-        });
+          await UsersCollection.insertOne({
+            uid: user.uid,
+            displayName: name,
+            email,
+            phone,
+            photoURL,
+            status: "active",
+            role: "staff",
+            createdAt: new Date(),
+          });
 
-        res.send({ success: true });
-      } catch (err) {
-        res.status(500).send({ message: err.message });
+          res.send({ success: true });
+        } catch (err) {
+          res.status(500).send({ message: err.message });
+        }
       }
-    });
+    );
 
     app.get("/users/:email", async (req, res) => {
       const email = req.params.email;
@@ -446,29 +485,39 @@ async function run() {
     });
 
     // GET all staff
-    app.get("/staff", verifyTokenWithFirebase, async (req, res) => {
-      const { status } = req.query;
-      const query = {};
-      query.role = "staff";
-      if (status) {
-        query.status = status;
+    app.get(
+      "/staff",
+      verifyTokenWithFirebase,
+      verifyADMIN,
+      async (req, res) => {
+        const { status } = req.query;
+        const query = {};
+        query.role = "staff";
+        if (status) {
+          query.status = status;
+        }
+        const result = await UsersCollection.find(query).toArray();
+        res.send(result);
       }
-      const result = await UsersCollection.find(query).toArray();
-      res.send(result);
-    });
+    );
 
     // UPDATE staff
-    app.patch("/staff/:email", verifyTokenWithFirebase, async (req, res) => {
-      const email = req.params.email;
-      const updateData = req.body;
+    app.patch(
+      "/staff/:email",
+      verifyTokenWithFirebase,
+      verifyADMIN,
+      async (req, res) => {
+        const email = req.params.email;
+        const updateData = req.body;
 
-      const result = await UsersCollection.updateOne(
-        { email },
-        { $set: updateData }
-      );
+        const result = await UsersCollection.updateOne(
+          { email },
+          { $set: updateData }
+        );
 
-      res.send(result);
-    });
+        res.send(result);
+      }
+    );
 
     // DELETE staff
     app.delete("/staff/:email", verifyTokenWithFirebase, async (req, res) => {
@@ -478,26 +527,27 @@ async function run() {
       res.send(result);
     });
 
-    app.patch(
-      "/users/update/:email",
-
-      async (req, res) => {
-        try {
-          const updatedData = req.body;
-          const email = req.params.email;
-
-          const result = await UsersCollection.updateOne(
-            { email },
-            { $set: updatedData }
-          );
-
-          res.send(result);
-        } catch (err) {
-          console.error(err);
-          res.status(500).send({ error: "Failed to update user" });
+    app.patch("/users/update", verifyTokenWithFirebase, async (req, res) => {
+      try {
+        const email = req.token_email; // trust token email only
+        if (!email) {
+          return res.status(401).send({ message: "Unauthorized" });
         }
+
+        const updatedData = req.body;
+
+        const result = await UsersCollection.updateOne(
+          { email },
+          { $set: updatedData }
+        );
+
+        res.send({ success: true, result });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to update user" });
       }
-    );
+    });
+
     app.patch(
       "/users/:userId/subscribe",
       verifyTokenWithFirebase,
@@ -665,12 +715,17 @@ async function run() {
       }
     });
 
-    app.get("/payments", verifyTokenWithFirebase, async (req, res) => {
-      const result = await PaymentsCollection.find({})
-        .sort({ createdAt: -1 })
-        .toArray();
-      res.send(result);
-    });
+    app.get(
+      "/payments",
+      verifyTokenWithFirebase,
+      verifyADMIN,
+      async (req, res) => {
+        const result = await PaymentsCollection.find({})
+          .sort({ createdAt: -1 })
+          .toArray();
+        res.send(result);
+      }
+    );
     app.get(
       "/payments/user/:userId",
       verifyTokenWithFirebase,
@@ -683,7 +738,7 @@ async function run() {
       }
     );
 
-    console.log("MongoDB Connected Successfully");
+    // console.log("MongoDB Connected Successfully");
   } catch (error) {
     console.error("Database Error:", error);
   }
