@@ -201,7 +201,7 @@ async function run() {
 
         IssueData.statusTimeline = [
           {
-            status: "Pending",
+            status: "Isssue Created",
             changedAt: new Date(),
             changedBy: IssueData.reportedBy,
           },
@@ -346,7 +346,7 @@ async function run() {
         const result = await IssuesCollection.updateOne(
           { _id: Id },
           {
-            $set: { status: "Rejected" },
+            $set: { status: "Rejected", assignedTo: null },
             $push: {
               statusTimeline: {
                 status: "Rejected",
@@ -354,22 +354,6 @@ async function run() {
                 changedBy: "admin",
               },
             },
-          }
-        );
-        res.send(result);
-      }
-    );
-
-    app.patch(
-      "/issues/:issueId/boosted",
-      verifyTokenWithFirebase,
-      async (req, res) => {
-        const { issueId } = req.params;
-        const Id = new ObjectId(issueId);
-        const result = await IssuesCollection.updateOne(
-          { _id: Id },
-          {
-            $set: { priority: "High" },
           }
         );
         res.send(result);
@@ -673,10 +657,20 @@ async function run() {
           return res.send({ message: "Payment already saved" });
         }
 
-        // save
+        // 🔹 Fetch user email from DB using userId
+        const user = await UsersCollection.findOne({
+          _id: new ObjectId(session.metadata.userId),
+        });
+
+        if (!user) {
+          return res.status(404).send({ message: "User not found" });
+        }
+
+        // ✅ SAVE PAYMENT (EMAIL INCLUDED)
         await PaymentsCollection.insertOne({
           paymentId: session.id,
-          userId: session.metadata.userId,
+          userId: session.metadata.userId, // optional
+          userEmail: user.email, // ✅ IMPORTANT
           issueId: session.metadata.issueId || null,
           amount: session.amount_total / 100,
           currency: session.currency,
@@ -687,15 +681,24 @@ async function run() {
           createdAt: new Date(),
         });
 
-        // boost issues
+        // Boost issue
         if (session.metadata.issueId) {
           await IssuesCollection.updateOne(
             { _id: new ObjectId(session.metadata.issueId) },
-            { $set: { priority: "High", boostedAt: new Date() } }
+            {
+              $set: { priority: "High", boostedAt: new Date() },
+              $push: {
+                statusTimeline: {
+                  status: "Issue Boosted",
+                  changedAt: new Date(),
+                  changedBy: user.email,
+                },
+              },
+            }
           );
         }
 
-        // active premium
+        // Activate premium
         if (!session.metadata.issueId) {
           await UsersCollection.updateOne(
             { _id: new ObjectId(session.metadata.userId) },
@@ -715,23 +718,26 @@ async function run() {
       }
     });
 
+    app.get("/payments/user", verifyTokenWithFirebase, async (req, res) => {
+      try {
+        const email = req.token_email;
+
+        const payments = await PaymentsCollection.find({ userEmail: email })
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        res.send(payments);
+      } catch (error) {
+        res.status(500).send({ message: "Failed to fetch payments" });
+      }
+    });
+
     app.get(
       "/payments",
       verifyTokenWithFirebase,
       verifyADMIN,
       async (req, res) => {
         const result = await PaymentsCollection.find({})
-          .sort({ createdAt: -1 })
-          .toArray();
-        res.send(result);
-      }
-    );
-    app.get(
-      "/payments/user/:userId",
-      verifyTokenWithFirebase,
-      async (req, res) => {
-        const { userId } = req.params;
-        const result = await PaymentsCollection.findOne({ userId })
           .sort({ createdAt: -1 })
           .toArray();
         res.send(result);
